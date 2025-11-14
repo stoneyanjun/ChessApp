@@ -29,9 +29,9 @@ struct HomeFeature: Reducer {
             return .run { send in
                 // 先在 MainActor 上做截图，拿到 Result
                 let result: Result<Data, CaptureError> = await MainActor.run {
-                    if let data = captureSquareFromMainWindow(startX: 1156,
+                    if let data = captureSquareFromMainWindow(startX: 1152,
                     startY: 158,
-                    squareSide: 1330) {
+                    squareSide: 1328) {
                         return .success(data)
                     } else {
                         return .failure(.captureFailed)
