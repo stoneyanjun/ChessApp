@@ -6,6 +6,8 @@
 //
 
 
+import CoreGraphics
+import Vision
 import SwiftUI
 import AppKit
 

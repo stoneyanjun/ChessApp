@@ -31,7 +31,7 @@ struct HomeView: View {
                         }
                     )
                     .frame(
-                        width: 400,
+                        width: 200,
                         height: proxy.size.height,
                         alignment: .topLeading
                     )
