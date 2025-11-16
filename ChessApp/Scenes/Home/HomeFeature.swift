@@ -5,6 +5,7 @@
 //  Created by stone on 2025/11/14.
 //
 
+/*
 import Foundation
 import ComposableArchitecture
 import AppKit
@@ -21,20 +22,26 @@ struct HomeFeature: Reducer {
         case .onAppear:
             state.isLoading = false
             state.errorMessage = nil
+//            finalCut64Squares(
+//                sourceBoardFolder: "ChessApp/Board/readyBoard",
+//                targetSquareFolder: "ChessApp/Square"
+//            )
+//            testFENEncoderWithSyntheticBoard()
+//            generateFENFromCurrentBoard()
             return .none
             
         case .beginButtonTapped:
             state.isLoading = true
             state.errorMessage = nil
             
-            // 1. 全屏截图 → 保存到 Documents
-            // 2. 自动检测中间棋盘 → 精确裁剪为正方形 → 也保存到 Documents
-            // 3. 棋盘 PNG Data 通过 captureCompleted 回到 state
-            return .run { send in
-                let result: Result<Data, CaptureError> = await captureFullAndBoardAndSaveToDocuments()
-                await send(.captureCompleted(result))
-            }
+            generateFENFromCurrentBoard()
+//            generateFENFromCurrentBoard()
+//            return .run { send in
+//                let result: Result<Data, CaptureError> = await captureScreenShot()
+//                await send(.captureCompleted(result))
+//            }
             
+            return .none
         case .webViewDidFinishLoading:
             state.isLoading = false
             state.errorMessage = nil
@@ -58,9 +65,14 @@ struct HomeFeature: Reducer {
                     state.errorMessage = "No active window to capture."
                 case .captureFailed:
                     state.errorMessage = "Capture center area failed."
+                case .saveFailed:
+                    state.errorMessage = "Save data failed."
+                default:
+                    state.errorMessage = "An unknown error occurred."
                 }
             }
             return .none
         }
     }
 }
+*/

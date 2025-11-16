@@ -5,6 +5,7 @@
 //  Created by stone on 2025/11/14.
 //
 
+/*
 import Foundation
 import ComposableArchitecture
 @ObservableState
@@ -21,3 +22,4 @@ struct HomeState: Equatable {
     /// 最近一次截到的中心正方形截图（PNG data）
     var lastCaptureImageData: Data?
 }
+*/

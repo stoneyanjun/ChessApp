@@ -3,6 +3,7 @@
 //  ChessApp
 //
 
+/*
 import SwiftUI
 
 struct LeftPaneView: View {
@@ -54,3 +55,4 @@ struct LeftPaneView: View {
         onBeginTapped: {}
     )
 }
+*/

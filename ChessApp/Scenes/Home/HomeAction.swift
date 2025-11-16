@@ -5,6 +5,7 @@
 //  Created by stone on 2025/11/14.
 //
 
+/*
 import Foundation
 import ComposableArchitecture
 
@@ -24,9 +25,4 @@ enum HomeAction: Equatable {
     /// 中心区域截图完成（成功 / 失败）
     case captureCompleted(Result<Data, CaptureError>)
 }
-
-/// 截图相关错误
-enum CaptureError: Error, Equatable {
-    case noWindow
-    case captureFailed
-}
+*/
