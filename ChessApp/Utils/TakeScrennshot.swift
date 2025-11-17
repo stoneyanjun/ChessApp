@@ -14,30 +14,31 @@ import ScreenCaptureKit
 import Vision
 
 @MainActor
-func captureScreenShot(current: Int) async -> Result<Data, CaptureError> {
+func captureScreenShot(current: Int, templates: [TemplateKey: TemplateDescriptor]) async -> Result<Data, CaptureError> {
     do {
         // 1️⃣ 调用你之前的 captureFullScreenCGImage()
-        let (imageOpt, resolution) = try await finialCaptureFullScreen()
+        let (imageOpt, resolutionRaw) = try await finialCaptureFullScreen()
         
         guard let image = imageOpt else {
             print("❌ captureFullScreenCGImage returned nil image")
             return .failure(.noImage)
         }
         
-        let resolutionFolderName = resolution.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 清理分辨率字符串，作为文件夹名和后续模板 / FEN 的 resolution 标识
+        let resolutionFolderName = resolutionRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalResolution = resolutionFolderName.isEmpty ? "UnknownResolution" : resolutionFolderName
         
-        // 3️⃣ 定位 ~/Documents
+        // 2️⃣ 定位 ~/Documents
         guard let docsURL = FileManager.default.urls(for: .documentDirectory,
                                                      in: .userDomainMask).first else {
             print("❌ Cannot locate Documents folder")
             return .failure(.documentsNotFound)
         }
         
-        // 4️⃣ 目标目录：~/Documents/ChessApp/ScreenShot/<resolution>/
-        let chessAppFolder = docsURL.appendingPathComponent("ChessApp", isDirectory: true)
+        // 3️⃣ 目标目录：~/Documents/ChessApp/<resolution>/ScreenShot/
+        let chessAppFolder   = docsURL.appendingPathComponent("ChessApp", isDirectory: true)
         let resolutionFolder = chessAppFolder.appendingPathComponent(finalResolution, isDirectory: true)
-        let screenshotRoot = resolutionFolder.appendingPathComponent("ScreenShot", isDirectory: true)
+        let screenshotRoot   = resolutionFolder.appendingPathComponent("ScreenShot", isDirectory: true)
         
         let fm = FileManager.default
         do {
@@ -49,7 +50,7 @@ func captureScreenShot(current: Int) async -> Result<Data, CaptureError> {
             return .failure(.saveFailed)
         }
         
-        // 5️⃣ 把 CGImage 转成 PNG Data
+        // 4️⃣ 把 CGImage 转成 PNG Data
         let rep = NSBitmapImageRep(cgImage: image)
         guard let pngData = rep.representation(using: .png, properties: [:]) else {
             print("❌ Failed to encode PNG data")
@@ -67,9 +68,24 @@ func captureScreenShot(current: Int) async -> Result<Data, CaptureError> {
             return .failure(.saveFailed)
         }
         
-        takeBoard(solution: resolution, current: current)
+        // 5️⃣ 从整屏截图中裁剪出棋盘图，保存到：
+        //    ~/Documents/ChessApp/<resolution>/Board/<current>.png
+        takeBoard(solution: finalResolution, current: current)
         
-        // 7️⃣ 成功 → 返回 PNG 的 Data
+        // 6️⃣ 用模板 + 切块 + 分类 + FENEncoder，得到本局的 FEN
+        let fenResult = generateFENFromBoard(solution: finalResolution, current: current, templates: templates)
+        switch fenResult {
+        case .success(let fen):
+            print("✅ Final FEN = \(fen)")
+            // 这里你之后可以：
+            // - 把 FEN 存到某个状态
+            // - 直接发给 Stockfish 计算下一步
+        case .failure(let error):
+            print("❌ Failed to generate FEN from board: \(error)")
+            // 截图本身是成功的，所以仍然返回 .success(pngData)
+        }
+        
+        // 7️⃣ 成功 → 返回 PNG 的 Data（FEN 通过日志输出）
         return .success(pngData)
         
     } catch {

@@ -72,6 +72,7 @@ func generateFENFromCurrentBoard() {
     }
 }
 */
+/*
 func generateFENFromCurrentBoard() {
     do {
         let fm = FileManager.default
@@ -139,3 +140,4 @@ func generateFENFromCurrentBoard() {
         print("❌ Error generating FEN: \(error)")
     }
 }
+*/

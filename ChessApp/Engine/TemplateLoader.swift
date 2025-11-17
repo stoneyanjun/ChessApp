@@ -2,276 +2,288 @@
 //  TemplateLoader.swift
 //  ChessApp
 //
-//  Created by stone on 2025/11/16.
+//  Created by stone on 2025/11/17.
 //
 
 import Foundation
-import CoreGraphics
 import AppKit
+import CoreGraphics
 
-/// Loads and prepares all template images (27 files) for later matching.
-/// Responsible for:
-/// - Discovering template PNG files
-/// - Parsing filename → TemplateKey
-/// - Loading CGImage
-/// - Preprocessing to grayscale feature vectors
-protocol TemplateLoaderProtocol {
-
-    /// Load all templates from a given folder URL (or bundle resource URL).
-    /// - Parameters:
-    ///   - rootURL: Folder that contains the PNG files.
-    ///   - resolutionSuffix: e.g. "3840_2160". If provided, only filenames
-    ///     whose basename ends with "_<resolutionSuffix>" will be loaded.
-    /// - Returns: Dictionary keyed by TemplateKey.
-    ///   Throws if critical I/O or decoding errors occur.
-    func loadTemplates(
-        from rootURL: URL,
-        resolutionSuffix: String?
-    ) throws -> [TemplateKey: TemplateDescriptor]
-}
-
-/// Convenience overload if你不想按分辨率过滤
-extension TemplateLoaderProtocol {
-    func loadTemplates(from rootURL: URL) throws -> [TemplateKey: TemplateDescriptor] {
-        try loadTemplates(from: rootURL, resolutionSuffix: nil)
-    }
-}
-
+/// 模板加载相关错误
 enum TemplateLoaderError: Error {
-    case directoryNotFound(URL)
-    case noPNGFilesFound(URL)
-    case imageDecodeFailed(URL)
-    case filenameParsingFailed(String)
-    case preprocessingFailed(String)
+    case cannotListDirectory(URL)
+    case cannotLoadImage(URL)
+    case cannotCreateCGImage(URL)
+    case invalidFileName(String)
 }
 
-/// Default implementation of TemplateLoaderProtocol for macOS.
-/// Assumes filenames like:
-///   blackPawn_blue_3840_2160.png
-///   empty_yellow_3840_2160.png
-///   empty_previous_3840_2160.png
-final class DefaultTemplateLoader: TemplateLoaderProtocol {
-
-    // 统一的目标尺寸（模板 & 棋盘小格都缩放到这个尺寸做匹配）
-    private let targetSize: Int = 64
-
+/// 负责从 Bundle 资源中加载所有棋子模板图片，并构造模板字典。
+///
+/// 约定文件命名格式：
+///   - 棋子类模板：
+///       blackPawn_blue_3840_2160.png
+///       whiteKing_yellow_3840_2160.png
+///   - 空格模板：
+///       empty_blue_3840_2160.png
+///       empty_yellow_3840_2160.png
+///       empty_previous_3840_2160.png
+///
+/// 其中：
+///   - 前缀部分（第一个下划线之前）用于解析棋子颜色/类型：
+///       blackPawn, whiteBishop, empty
+///   - 第二个 token 是背景：blue / yellow / previous
+///   - 后面所有 token 合起来作为分辨率后缀（例如 "3840_2160"）
+///
+/// 加载时会根据 `resolutionSuffix` 过滤文件名后缀：
+///   *_<resolutionSuffix>.png
+///
+/// ⚠️ 确保你的 TemplateDescriptor 已经定义为：
+///
+///   struct TemplateDescriptor {
+///       let key: TemplateKey
+///       let width: Int
+///       let height: Int
+///       let grayscaleVector: [Float]
+///       let cgImage: CGImage      // ✅ 必须有这个字段
+///   }
+///
+final class DefaultTemplateLoader {
+    
     // MARK: - Public API
-
+    
+    /// 从指定目录加载所有模板 PNG，按 `resolutionSuffix` 过滤。
+    ///
+    /// - Parameters:
+    ///   - rootURL: Bundle 资源目录，如 `Bundle.main.resourceURL!`
+    ///   - resolutionSuffix: 例如 "3840_2160" 或 "1920_1080"
+    ///
+    /// - Returns: `[TemplateKey : TemplateDescriptor]`
     func loadTemplates(
         from rootURL: URL,
-        resolutionSuffix: String?
+        resolutionSuffix: String
     ) throws -> [TemplateKey: TemplateDescriptor] {
-
-        print("🧩 TemplateLoader: rootURL = \(rootURL.path)")
-        let fm = FileManager.default
-
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: rootURL.path, isDirectory: &isDir), isDir.boolValue else {
-            print("❌ TemplateLoader: directory not found")
-            throw TemplateLoaderError.directoryNotFound(rootURL)
-        }
-
-        let allFiles = try fm.contentsOfDirectory(
-            at: rootURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        // 只保留 .png
-        var pngFiles = allFiles.filter { $0.pathExtension.lowercased() == "png" }
-
-        // 如果指定了分辨率后缀，例如 "3840_2160"，只保留 basename 以 "_3840_2160" 结尾的文件
-        if let suffix = resolutionSuffix, !suffix.isEmpty {
-            let pattern = "_\(suffix)"
-            pngFiles = pngFiles.filter { url in
-                let base = url.deletingPathExtension().lastPathComponent
-                return base.hasSuffix(pattern)
-            }
-        }
-
-        guard !pngFiles.isEmpty else {
-            print("❌ TemplateLoader: no PNG files found")
-            throw TemplateLoaderError.noPNGFilesFound(rootURL)
-        }
-
-        print("🧩 TemplateLoader: found \(pngFiles.count) PNG files")
-
+        
         var result: [TemplateKey: TemplateDescriptor] = [:]
-
-        for url in pngFiles.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-            let baseName = url.deletingPathExtension().lastPathComponent
-            print("🧩 TemplateLoader: processing \(baseName).png")
-
-            do {
-                let key = try parseTemplateKey(from: baseName)
-
-                guard
-                    let nsImage = NSImage(contentsOf: url),
-                    let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-                else {
-                    print("❌ TemplateLoader: imageDecodeFailed for \(url.lastPathComponent)")
-                    throw TemplateLoaderError.imageDecodeFailed(url)
+        let fm = FileManager.default
+        
+        print("🔍 Templates folder = \(rootURL.path)")
+        print("🧩 TemplateLoader: rootURL = \(rootURL.path)")
+        
+        let files: [URL]
+        do {
+            files = try fm.contentsOfDirectory(
+                at: rootURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            print("❌ TemplateLoader: cannot list directory: \(error)")
+            throw TemplateLoaderError.cannotListDirectory(rootURL)
+        }
+        
+        // 只要 PNG，并且文件名以 "_\(resolutionSuffix).png" 结尾
+        let suffix = "_\(resolutionSuffix).png"
+        let pngs = files.filter { url in
+            url.pathExtension.lowercased() == "png" &&
+            url.lastPathComponent.hasSuffix(suffix)
+        }
+        
+        print("🧩 TemplateLoader: found \(pngs.count) PNG files for resolutionSuffix=\(resolutionSuffix)")
+        
+        for url in pngs {
+            autoreleasepool {
+                let fileName = url.lastPathComponent
+                print("🧩 TemplateLoader: processing \(fileName)")
+                
+                // 1️⃣ 加载 NSImage / CGImage
+                guard let nsImage = NSImage(contentsOf: url) else {
+                    print("⚠️ Cannot load image at \(fileName)")
+                    return
                 }
-
-                let descriptor = try makeDescriptor(from: cgImage, key: key)
-                result[key] = descriptor
-
+                guard let cg = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    print("⚠️ Cannot get CGImage for \(fileName)")
+                    return
+                }
+                
+                // 2️⃣ 从文件名解析 TemplateKey
+                guard let key = Self.parseKey(fromFileName: fileName) else {
+                    print("⚠️ Cannot parse TemplateKey from \(fileName)")
+                    return
+                }
+                
+                // 3️⃣ 生成灰度特征向量
+                let grayVector = Self.makeGrayscaleVector(from: cg)
+                
+                // 4️⃣ 构造 TemplateDescriptor
+                let desc = TemplateDescriptor(
+                    key: key,
+                    width: cg.width,
+                    height: cg.height,
+                    grayscaleVector: grayVector,
+                    cgImage: cg
+                )
+                
+                result[key] = desc
                 print("✅ TemplateLoader: added template for key \(key)")
-            } catch {
-                print("❌ TemplateLoader: filenameParsingFailed or preprocessingFailed for \(baseName): \(error)")
-                // 对单个文件解析失败，直接抛出（也可以选择跳过，看你需求）
-                throw error
             }
         }
-
+        
         print("✅ TemplateLoader: total \(result.count) templates loaded")
         return result
     }
-
-    // MARK: - Filename parsing
-
-    /// Parse a filename (without extension) into TemplateKey.
-    /// Supported patterns:
-    ///   - "blackPawn_blue_3840_2160"
-    ///   - "whiteQueen_yellow_3840_2160"
-    ///   - "empty_blue_3840_2160"
-    ///   - "empty_previous_3840_2160"
+    
+    // MARK: - Parsing File Name
+    
+    /// 从文件名解析 TemplateKey。
     ///
-    /// Rules:
-    ///   - pieceColor: white / black / none (for empty)
-    ///   - pieceKind: pawn/knight/bishop/rook/queen/king/empty
-    ///   - background: blue / yellow / previous
-    func parseTemplateKey(from baseName: String) throws -> TemplateKey {
-        // 按 '_' 切分，前三个 token 里包含了颜色、棋子和背景，其余可能是分辨率
-        let parts = baseName.split(separator: "_")
+    /// 例如：
+    ///   blackBishop_blue_3840_2160.png
+    ///   → namePart = blackBishop, backgroundPart = blue
+    ///
+    ///   empty_previous_3840_2160.png
+    ///   → namePart = empty, backgroundPart = previous
+    private static func parseKey(fromFileName fileName: String) -> TemplateKey? {
+        let base = (fileName as NSString).deletingPathExtension
+        
+        // 按 '_' 切分：
+        //   blackBishop_blue_3840_2160 → ["blackBishop", "blue", "3840", "2160"]
+        //   empty_previous_3840_2160  → ["empty", "previous", "3840", "2160"]
+        let parts = base.split(separator: "_")
         guard parts.count >= 2 else {
-            throw TemplateLoaderError.filenameParsingFailed(baseName)
+            print("⚠️ TemplateLoader: invalid file name format: \(fileName)")
+            return nil
         }
-
-        let first = String(parts[0])        // "blackPawn" / "whiteQueen" / "empty"
-        let second = String(parts[1])       // "blue" / "yellow" / "previous"
-
+        
+        let namePart = String(parts[0])
+        let backgroundPart = String(parts[1])
+        
         // 1) 解析背景
-        let background: BackgroundKind
-        switch second.lowercased() {
-        case "blue":
-            background = .blue
-        case "yellow":
-            background = .yellow
-        case "previous":
-            background = .previous
-        default:
-            throw TemplateLoaderError.filenameParsingFailed(baseName)
+        guard let background = BackgroundKind(from: backgroundPart) else {
+            print("⚠️ TemplateLoader: invalid background token '\(backgroundPart)' in file \(fileName)")
+            return nil
         }
-
-        // 2) 解析棋子 & 颜色
-        if first.lowercased() == "empty" {
-            return TemplateKey(
+        
+        // 2) 解析棋子颜色 & 类型
+        if namePart == "empty" {
+            // 空格模板
+            let key = TemplateKey(
                 pieceColor: .none,
                 pieceKind: .empty,
                 background: background
             )
-        }
-
-        // 否则是类似 "blackPawn" / "whiteKnight"
-        let lower = first.lowercased()
-
-        let pieceColor: PieceColor
-        let pieceName: String
-
-        if lower.hasPrefix("white") {
-            pieceColor = .white
-            pieceName = String(first.dropFirst("white".count))
-        } else if lower.hasPrefix("black") {
-            pieceColor = .black
-            pieceName = String(first.dropFirst("black".count))
+            return key
+        } else if namePart.hasPrefix("white") {
+            let pieceToken = String(namePart.dropFirst("white".count))
+            guard let kind = PieceKind(fromPieceToken: pieceToken) else {
+                print("⚠️ TemplateLoader: invalid piece token '\(pieceToken)' in file \(fileName)")
+                return nil
+            }
+            let key = TemplateKey(
+                pieceColor: .white,
+                pieceKind: kind,
+                background: background
+            )
+            return key
+        } else if namePart.hasPrefix("black") {
+            let pieceToken = String(namePart.dropFirst("black".count))
+            guard let kind = PieceKind(fromPieceToken: pieceToken) else {
+                print("⚠️ TemplateLoader: invalid piece token '\(pieceToken)' in file \(fileName)")
+                return nil
+            }
+            let key = TemplateKey(
+                pieceColor: .black,
+                pieceKind: kind,
+                background: background
+            )
+            return key
         } else {
-            throw TemplateLoaderError.filenameParsingFailed(baseName)
+            print("⚠️ TemplateLoader: cannot parse color/piece from '\(namePart)' in file \(fileName)")
+            return nil
         }
-
-        let pieceKind: PieceKind
-        switch pieceName.lowercased() {
-        case "pawn":
-            pieceKind = .pawn
-        case "knight":
-            pieceKind = .knight
-        case "bishop":
-            pieceKind = .bishop
-        case "rook":
-            pieceKind = .rook
-        case "queen":
-            pieceKind = .queen
-        case "king":
-            pieceKind = .king
-        default:
-            throw TemplateLoaderError.filenameParsingFailed(baseName)
-        }
-
-        return TemplateKey(
-            pieceColor: pieceColor,
-            pieceKind: pieceKind,
-            background: background
-        )
     }
-
-    // MARK: - Image preprocessing
-
-    /// Convert CGImage into a TemplateDescriptor, including grayscale vector.
-    /// - Parameters:
-    ///   - image: Source CGImage.
-    ///   - key:   Already parsed TemplateKey.
-    /// - Returns: TemplateDescriptor with preprocessed data filled.
-    func makeDescriptor(from image: CGImage, key: TemplateKey) throws -> TemplateDescriptor {
-        let width = targetSize
-        let height = targetSize
-
-        // 灰度 color space
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.genericGrayGamma2_2) else {
-            throw TemplateLoaderError.preprocessingFailed("Cannot create gray colorspace")
-        }
-
-        // 每像素 1 字节，8 bits
+    
+    // MARK: - Grayscale Feature
+    
+    /// 把 CGImage 压缩到小尺寸灰度图，并展开成 [Float] 方便做相似度比较。
+    ///
+    /// - 默认采样尺寸 sampleSize x sampleSize，例如 16x16 = 256 维。
+    private static func makeGrayscaleVector(
+        from image: CGImage,
+        sampleSize: Int = 16
+    ) -> [Float] {
+        let width = sampleSize
+        let height = sampleSize
+        
+        let colorSpace = CGColorSpaceCreateDeviceGray()
         let bytesPerPixel = 1
         let bytesPerRow = width * bytesPerPixel
-        let bitsPerComponent = 8
-
-        // 创建 Bitmap 上下文
-        guard let context = CGContext(
-            data: nil,
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        
+        guard let ctx = CGContext(
+            data: &pixels,
             width: width,
             height: height,
-            bitsPerComponent: bitsPerComponent,
+            bitsPerComponent: 8,
             bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.none.rawValue
         ) else {
-            throw TemplateLoaderError.preprocessingFailed("Cannot create CGContext")
+            print("⚠️ TemplateLoader: cannot create grayscale context")
+            return []
         }
+        
+        ctx.interpolationQuality = .low
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        // 0...255 → 0.0...1.0
+        let vector: [Float] = pixels.map { Float($0) / 255.0 }
+        return vector
+    }
+}
 
-        // 在灰度 context 中绘制并缩放原图
-        context.interpolationQuality = .high
-        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
-        context.draw(image, in: rect)
+// MARK: - Convenience initializers for enums
 
-        // 拿到像素数据
-        guard let data = context.data else {
-            throw TemplateLoaderError.preprocessingFailed("Context has no data")
+private extension BackgroundKind {
+    init?(from raw: String) {
+        switch raw.lowercased() {
+        case "blue":
+            self = .blue
+        case "yellow":
+            self = .yellow
+        case "previous":
+            self = .previous
+        default:
+            return nil
         }
+    }
+}
 
-        // 将内存视为 UInt8 数组
-        let count = width * height
-        let buffer = data.bindMemory(to: UInt8.self, capacity: count)
-        var vector = [Float](repeating: 0, count: count)
-
-        for i in 0..<count {
-            vector[i] = Float(buffer[i]) / 255.0
+private extension PieceKind {
+    /// 从文件名里剥离出来的棋子 token（不含颜色前缀）转成 PieceKind。
+    ///
+    /// 例如：
+    ///   - "Pawn"   → .pawn
+    ///   - "Knight" → .knight
+    ///   - "Bishop" → .bishop
+    ///   - "Rook"   → .rook
+    ///   - "Queen"  → .queen
+    ///   - "King"   → .king
+    init?(fromPieceToken token: String) {
+        switch token.lowercased() {
+        case "pawn":
+            self = .pawn
+        case "knight":
+            self = .knight
+        case "bishop":
+            self = .bishop
+        case "rook":
+            self = .rook
+        case "queen":
+            self = .queen
+        case "king":
+            self = .king
+        default:
+            return nil
         }
-
-        return TemplateDescriptor(
-            key: key,
-            width: width,
-            height: height,
-            grayscaleVector: vector
-        )
     }
 }

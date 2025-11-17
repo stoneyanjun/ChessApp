@@ -5,6 +5,8 @@
 //  Created by stone on 2025/11/16.
 //
 
+ import CoreGraphics
+
 // MARK: - Core Enums
 
 /// 棋子颜色
@@ -42,11 +44,16 @@ struct TemplateKey: Hashable, Codable {
 }
 
 /// 一张模板图片的描述信息
+
+/// 一张模板图片的描述信息
 struct TemplateDescriptor {
     let key: TemplateKey
     let width: Int
     let height: Int
-    let grayscaleVector: [Float]   // 预处理后的灰度特征
+    let grayscaleVector: [Float]   // 预处理后的灰度特征，用于匹配
+
+    /// ✅ 新增：原始 CGImage，用于在 UI 里重画棋盘
+    let cgImage: CGImage
 }
 
 // MARK: - SquareState & BoardState
