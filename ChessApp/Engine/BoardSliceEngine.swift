@@ -9,142 +9,150 @@ import Foundation
 import CoreGraphics
 import AppKit
 
-// MARK: - Errors
+/// 负责把整张棋盘图片切成 8x8 小格（每格一个 CGImage）
+/// - 输入：一张包含完整棋盘的 CGImage，以及可选的 boardRect（棋盘区域像素坐标）
+/// - 输出：[[CGImage]]，shape = [8][8]
+///   - 第一维 rank：0 = 白方底线（1 排），7 = 黑方底线（8 排）
+///   - 第二维 file：0 = a 列，7 = h 列
+protocol BoardSliceEngineProtocol {
+    /// - Parameters:
+    ///   - image: 原始截图或棋盘图
+    ///   - boardRect: 棋盘区域在 image 中的坐标（CoreGraphics 坐标：原点在左下）。
+    ///                传 nil 时，会在整张图中取最大居中的正方形作为棋盘。
+    func sliceBoard(from image: CGImage, boardRect: CGRect?) throws -> [[CGImage]]
+}
 
 enum BoardSliceEngineError: Error {
-    /// Provided boardRect is outside the image bounds.
-    case boardRectOutOfBounds
-    /// Board region cannot be evenly divided into 8×8 squares.
-    case invalidBoardGeometry(width: Int, height: Int)
-    /// Underlying CGImage operation failed.
-    case imageSlicingFailed(String)
+    case invalidBoardRect
+    case invalidBoardDimensions(width: Int, height: Int)
+    case cannotCropSquare(rank: Int, file: Int)
 }
 
-// MARK: - Protocol
-
-/// Engine that slices a full-board image into 8×8 square images.
-///
-/// Coordinate convention:
-/// - file: 0..7  →  a..h (left to right)
-/// - rank: 0..7  →  1..8 (bottom to top, white at rank 0)
-///
-/// So result[0][0] is a1, result[0][4] is e1, result[7][4] is e8.
-protocol BoardSliceEngineProtocol {
-
-    /// Slice a full-board CGImage into 8×8 square images.
-    ///
-    /// - Parameters:
-    ///   - image:     Full chessboard image (or image containing the board).
-    ///   - boardRect: Optional rect (in image coordinates) specifying
-    ///                where the chessboard lies. If nil, the whole image
-    ///                is treated as the board.
-    ///
-    /// - Returns: 8×8 array of CGImage, indexed as [rank][file].
-    /// - Throws: BoardSliceEngineError on invalid geometry or slicing failures.
-    func sliceBoard(
-        from image: CGImage,
-        boardRect: CGRect?
-    ) throws -> [[CGImage]]
-}
-
-// MARK: - Default Implementation
-
-/// Default implementation for macOS, using CoreGraphics.
-/// This class does *no* UI work; it only performs geometric calculations
-/// and CGImage cropping.
+/// 默认实现：把棋盘切成 8x8 个 CGImage
 final class DefaultBoardSliceEngine: BoardSliceEngineProtocol {
+
+    // 棋盘固定 8 列 x 8 排
+    private let boardSize = 8
 
     // MARK: - Public API
 
-    func sliceBoard(
-        from image: CGImage,
-        boardRect: CGRect?
-    ) throws -> [[CGImage]] {
+    func sliceBoard(from image: CGImage, boardRect: CGRect?) throws -> [[CGImage]] {
+        let imageWidth = image.width
+        let imageHeight = image.height
 
-        let boardRect = try resolveBoardRect(for: image, requestedRect: boardRect)
-        let cellSize = try computeCellSize(from: boardRect)
-
-        // We'll build row-by-row: board[rank][file]
-        // rank 0 = bottom (white side), rank 7 = top (black side)
-        var board: [[CGImage]] = []
-
-        for rank in 0..<8 {
-            var row: [CGImage] = []
-
-            // CGImage origin is top-left, but our rank 0 is bottom.
-            // flippedRank 7 means top row in image, 0 means bottom.
-            let flippedRank = 7 - rank
-
-            for file in 0..<8 {
-                let x = boardRect.minX + CGFloat(file) * cellSize.width
-                let y = boardRect.minY + CGFloat(flippedRank) * cellSize.height
-
-                let cropRect = CGRect(
-                    x: x,
-                    y: y,
-                    width: cellSize.width,
-                    height: cellSize.height
-                )
-
-                guard let square = image.cropping(to: cropRect) else {
-                    throw BoardSliceEngineError.imageSlicingFailed(
-                        "Failed cropping rank \(rank), file \(file), rect \(cropRect)"
-                    )
-                }
-
-                row.append(square)
-            }
-
-            board.append(row)
+        guard imageWidth > 0, imageHeight > 0 else {
+            throw BoardSliceEngineError.invalidBoardDimensions(width: imageWidth, height: imageHeight)
         }
 
-        return board
-    }
+        // 1. 确定棋盘区域 rect（像素坐标，原点在左下）
+        let boardCGRect: CGRect
+        if let rect = boardRect {
+            // 调用方显式给出棋盘 rect，检查合法性
+            let imgRect = CGRect(x: 0, y: 0,
+                                 width: CGFloat(imageWidth),
+                                 height: CGFloat(imageHeight))
+            let inter = rect.intersection(imgRect)
+            guard !inter.isNull, inter.width > 0, inter.height > 0 else {
+                throw BoardSliceEngineError.invalidBoardRect
+            }
+            boardCGRect = inter
+        } else {
+            // 未指定时：取图像中最大的中心正方形
+            let side = CGFloat(min(imageWidth, imageHeight))
+            let originX = (CGFloat(imageWidth) - side) / 2.0
+            let originY = (CGFloat(imageHeight) - side) / 2.0
+            boardCGRect = CGRect(x: originX, y: originY, width: side, height: side)
+        }
 
-    // MARK: - Helpers
+        // 2. 计算每一格的大小（用 Int 避免浮点累积误差）
+        let boardWidthPx = Int(boardCGRect.width.rounded())
+        let boardHeightPx = Int(boardCGRect.height.rounded())
 
-    /// Returns a validated board rect (either the provided one,
-    /// or the full image bounds if nil), ensuring it lies inside the image.
-    ///
-    /// - Throws: BoardSliceEngineError.boardRectOutOfBounds if invalid.
-    func resolveBoardRect(
-        for image: CGImage,
-        requestedRect: CGRect?
-    ) throws -> CGRect {
+        guard boardWidthPx > 0, boardHeightPx > 0 else {
+            throw BoardSliceEngineError.invalidBoardDimensions(width: boardWidthPx, height: boardHeightPx)
+        }
 
-        let fullRect = CGRect(
-            x: 0,
-            y: 0,
-            width: image.width,
-            height: image.height
+        let cellWidth = boardWidthPx / boardSize
+        let cellHeight = boardHeightPx / boardSize
+
+        // 3. 逐格裁剪：rank 从 0..7（底到顶），file 从 0..7（a..h）
+        var result: [[CGImage]] = Array(
+            repeating: Array(repeating: image, count: boardSize),
+            count: boardSize
         )
 
-        guard let rect = requestedRect else {
-            // If caller doesn't specify, treat whole image as the board
-            return fullRect
+        for rank in 0..<boardSize {
+            for file in 0..<boardSize {
+                // CoreGraphics 坐标：原点在左下
+                // rank 0 = 白方底线 = boardRect 的最下方
+                let x = Int(boardCGRect.origin.x) + file * cellWidth
+                let y = Int(boardCGRect.origin.y) + rank * cellHeight
+
+                let rect = CGRect(
+                    x: CGFloat(x),
+                    y: CGFloat(y),
+                    width: CGFloat(cellWidth),
+                    height: CGFloat(cellHeight)
+                )
+
+                guard let squareCG = image.cropping(to: rect) else {
+                    throw BoardSliceEngineError.cannotCropSquare(rank: rank, file: file)
+                }
+
+                result[rank][file] = squareCG
+            }
         }
 
-        // Ensure requested rect is fully inside the image
-        if !fullRect.contains(rect) {
-            throw BoardSliceEngineError.boardRectOutOfBounds
-        }
+        // （可选）调试导出：把 64 个小格输出到 Documents/ChessApp/DebugSquares
+        debugExportSquaresIfNeeded(result)
 
-        return rect
+        return result
     }
 
-    /// Compute integer cell size from a board rect.
-    ///
-    /// - Throws: BoardSliceEngineError.invalidBoardGeometry if width/height
-    ///           cannot be evenly divided by 8.
-    func computeCellSize(from boardRect: CGRect) throws -> CGSize {
+    // MARK: - Debug Export (optional)
 
-        let w = Int(boardRect.width)
-        let h = Int(boardRect.height)
-
-        guard w % 8 == 0, h % 8 == 0 else {
-            throw BoardSliceEngineError.invalidBoardGeometry(width: w, height: h)
+    /// 调试用：把切好的 64 个小格导出到 ~/Documents/ChessApp/DebugSquares
+    /// 方便人工检查切图是否正确。
+    private func debugExportSquaresIfNeeded(_ squares: [[CGImage]]) {
+        // 如果你不想导出，直接注释掉函数体即可。
+        let fm = FileManager.default
+        guard let docsURL = fm.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("❌ debugExportSquares: cannot locate Documents folder")
+            return
         }
 
-        return CGSize(width: w / 8, height: h / 8)
+        let debugFolder = docsURL
+            .appendingPathComponent("ChessApp", isDirectory: true)
+            .appendingPathComponent("DebugSquares", isDirectory: true)
+
+        do {
+            try fm.createDirectory(at: debugFolder, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("❌ debugExportSquares: cannot create folder: \(error)")
+            return
+        }
+
+        for rank in 0..<squares.count {
+            for file in 0..<squares[rank].count {
+                let cg = squares[rank][file]
+                let rep = NSBitmapImageRep(cgImage: cg)
+                guard let data = rep.representation(using: .png, properties: [:]) else {
+                    print("❌ debugExportSquares: cannot make PNG for rank \(rank), file \(file)")
+                    continue
+                }
+
+                // 文件命名：rank0_file0.png 这种
+                let filename = "rank\(rank)_file\(file).png"
+                let url = debugFolder.appendingPathComponent(filename)
+
+                do {
+                    try data.write(to: url, options: .atomic)
+                } catch {
+                    print("❌ debugExportSquares: failed to write \(filename): \(error)")
+                }
+            }
+        }
+
+        print("📸 debugExportSquares: exported to \(debugFolder.path)")
     }
 }

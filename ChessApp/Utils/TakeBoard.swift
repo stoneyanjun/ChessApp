@@ -28,7 +28,11 @@ func takeBoard(solution: String, current: Int) {
         // 这些坐标是以屏幕左上角为原点测量的
         startX = 1156
         startYFromTop = 160
-        side = 1328
+        side = 132
+    case "1920_1080":
+        startX = 642
+        startYFromTop = 80
+        side = 83
     default:
         print("⚠️ Unsupported solution: \(solution)")
         return
@@ -93,6 +97,7 @@ func takeBoard(solution: String, current: Int) {
         // ⚠️ CoreGraphics 以左下角为原点，需要从顶部坐标转换：
         // 原始注释：startYFromTop 是从“屏幕顶部”往下量的
         let imageHeight = CGFloat(cgImage.height)
+        print(imageHeight)
         let cropOriginY = startYFromTop
         
         let cropRect = CGRect(

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct NewLeftPanelView: View {
+    @Binding var current: Int
     /// 点击 Begin 时要执行的动作，由外部注入
     let onBegin: () -> Void
     
@@ -9,6 +10,10 @@ struct NewLeftPanelView: View {
     
     var body: some View {
         VStack {
+            Text("Step \(current)")
+                .font(.title)
+                .foregroundColor(.white)
+                .padding(.bottom, 4)
             Button("Begin") {
                 onBegin()
             }
