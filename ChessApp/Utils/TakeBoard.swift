@@ -1,10 +1,3 @@
-//
-//  TakeBoard.swift
-//  ChessApp
-//
-//  Created by stone on 2025/11/16.
-//
-
 import Foundation
 import AppKit
 import CoreGraphics
@@ -16,23 +9,27 @@ enum Constants {
     static let square = "Square"
 }
 
-/// 从指定分辨率目录下，取 `ScreenShot/current.png`，裁剪棋盘区域，保存到 `Board` 文件夹
+/// 从指定分辨率目录下，取 `ScreenShot/current.png`，
+/// 按“左下角为原点”的坐标裁剪出棋盘区域，保存到 `Board` 文件夹。
 func takeBoard(solution: String, current: Int) {
-    // 1. Choose crop parameters based on resolution
+    // 1. 按分辨率选择裁剪参数（全部按 CGImage 坐标：左下角为原点）
     let startX: CGFloat
-    let startYFromTop: CGFloat
+    let startY: CGFloat
     let side: CGFloat
     
     switch solution {
     case "3840_2160":
-        // 这些坐标是以屏幕左上角为原点测量的
+        // ✅ 这组是你已验证能用的参数（从左下角量）
+        // 如果你之前用的是 side = 1328，就改回 1328
         startX = 1156
-        startYFromTop = 160
-        side = 132
+        startY = 160
+        side   = 1328   // 或者 132，看你实际验证过哪一个
     case "1920_1080":
-        startX = 642
-        startYFromTop = 80
-        side = 83
+        // ✅ 直接复用 oldbatchCropSquaresFromFullScreenshot 中已验证过的一组
+        // oldbatch: startX=642, startY=80, side=664
+        startX = 578
+        startY = 80
+        side   = 664
     default:
         print("⚠️ Unsupported solution: \(solution)")
         return
@@ -94,18 +91,17 @@ func takeBoard(solution: String, current: Int) {
             return
         }
         
-        // ⚠️ CoreGraphics 以左下角为原点，需要从顶部坐标转换：
-        // 原始注释：startYFromTop 是从“屏幕顶部”往下量的
-        let imageHeight = CGFloat(cgImage.height)
-        print(imageHeight)
-        let cropOriginY = startYFromTop
+        let imgW = CGFloat(cgImage.width)
+        let imgH = CGFloat(cgImage.height)
+        print("📏 Screenshot size = \(Int(imgW)) x \(Int(imgH))")
+        print("📐 Crop board at (x=\(startX), y=\(startY)), side=\(side)")
         
         let cropRect = CGRect(
             x: startX,
-            y: cropOriginY,
+            y: startY,
             width: side,
             height: side
-        )
+        ).integral
         
         guard let croppedCGImage = cgImage.cropping(to: cropRect) else {
             print("❌ Failed to crop board from: \(pngURL.lastPathComponent)")
